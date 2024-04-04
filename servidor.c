@@ -16,18 +16,48 @@
 pthread_mutex_t mutex_mensaje;
 pthread_cond_t cond_mensaje;
 int not_finished = true;
-int sd, sc;
+int sd;
 
-void treat_request(void *mess)
+void treat_request(void *sc_request)
 {
-	struct request message;	/* mensaje local */
-	struct response res;
-
 	pthread_mutex_lock(&mutex_mensaje);
-	message = (*(struct request *) mess);
+	sc = (*(int) sc_request);
 	not_finished = false;
 	pthread_cond_signal(&cond_mensaje);
 	pthread_mutex_unlock(&mutex_mensaje);
+
+	//Recibir mensaje que se puede pasar a otra funcion o crear una funcion que lo haga
+	// Leer el atributo 'op'
+	if (read(sc, (char *) &message.op, sizeof(int)) == -1) { 
+		perror("Error al leer el socket sc (op)\n");
+		close(sc);
+	}
+
+	// Leer el atributo 'v1'
+	// Creo que si conoce max_value_length
+	if (read(sc, message.v1, MAX_VALUE_LENGTH) == -1) { 
+		perror("Error al leer el socket sc (v1)\n");
+		close(sc);
+	}
+
+	// Leer el atributo 'key'
+	if (read(sc, (char *) &message.key, sizeof(int)) == -1) { 
+		perror("Error al leer el socket sc (key)\n");
+		close(sc);
+	}
+
+	// Leer el atributo 'N'
+	if (read(sc, (char *) &message.N, sizeof(int)) == -1) { 
+		perror("Error al leer el socket sc (N)\n");
+		close(sc);
+	}
+
+	// Leer el atributo 'v2'
+	if (read(sc, (char *) &message.v2, sizeof(double) * message.N) == -1) { 
+		perror("Error al leer el socket sc (v2)\n");
+		close(sc);
+	}
+
 	switch (message.op)
 	{
 		case 0:
@@ -115,6 +145,7 @@ int main(int argc, char *argv[])
 	socklen_t size;
 	pthread_attr_t t_attr;
 	pthread_t thid;
+	int sc;
 	int val = 1;
 
 	if (argc != 2)
@@ -165,39 +196,7 @@ int main(int argc, char *argv[])
 		}
 		printf("conexión aceptada de IP: %s   Puerto: %d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-		//Recibir mensaje que se puede pasar a otra funcion o crear una funcion que lo haga
-		// Leer el atributo 'op'
-		if (read(sc, (char *) &message.op, sizeof(int)) == -1) { 
-			perror("Error al leer el socket sc (op)\n");
-			close(sc);
-		}
-
-		// Leer el atributo 'v1'
-		// Creo que si conoce max_value_length
-		if (read(sc, message.v1, MAX_VALUE_LENGTH) == -1) { 
-			perror("Error al leer el socket sc (v1)\n");
-			close(sc);
-		}
-
-		// Leer el atributo 'key'
-		if (read(sc, (char *) &message.key, sizeof(int)) == -1) { 
-			perror("Error al leer el socket sc (key)\n");
-			close(sc);
-		}
-
-		// Leer el atributo 'N'
-		if (read(sc, (char *) &message.N, sizeof(int)) == -1) { 
-			perror("Error al leer el socket sc (N)\n");
-			close(sc);
-		}
-
-		// Leer el atributo 'v2'
-		if (read(sc, (char *) &message.v2, sizeof(double) * message.N) == -1) { 
-			perror("Error al leer el socket sc (v2)\n");
-			close(sc);
-		}
-
-		if (pthread_create(&thid, &t_attr, (void *)treat_request, (void *)&message)== 0)
+		if (pthread_create(&thid, &t_attr, (void *)treat_request, (void *)&sc)== 0)
 		{
 			pthread_mutex_lock(&mutex_mensaje);
 			while (not_finished)
