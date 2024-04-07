@@ -1,15 +1,15 @@
+#define MAX_VALUE_LENGTH 256
 #include <pthread.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
 #include "claves.h"
-#include "structs_handler.h"
 //a?
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
-#include <unistd.h>
+#include "lines.h"
 
 //añadir protocolo de comunicacion metodo a metodo mencionar si se pasa todo a texto o no
 
@@ -21,126 +21,104 @@ int sd;
 void treat_request(void *sc_request)
 {
 	pthread_mutex_lock(&mutex_mensaje);
-	sc = (*(int) sc_request);
+	int sc = *((int *) sc_request);
 	not_finished = false;
 	pthread_cond_signal(&cond_mensaje);
 	pthread_mutex_unlock(&mutex_mensaje);
 
-	//Recibir mensaje que se puede pasar a otra funcion o crear una funcion que lo haga
-	// Leer el atributo 'op'
-	if (read(sc, (char *) &message.op, sizeof(int)) == -1) { 
-		perror("Error al leer el socket sc (op)\n");
-		close(sc);
-	}
+	char op;
+	int key;
+	char v1[MAX_VALUE_LENGTH];
+	int N;
+	double	v2[20];
+	int error;
+	recvMessage(sc, (char *) &op, sizeof(char));
 
-	// Leer el atributo 'v1'
-	// Creo que si conoce max_value_length
-	if (read(sc, message.v1, MAX_VALUE_LENGTH) == -1) { 
-		perror("Error al leer el socket sc (v1)\n");
-		close(sc);
-	}
-
-	// Leer el atributo 'key'
-	if (read(sc, (char *) &message.key, sizeof(int)) == -1) { 
-		perror("Error al leer el socket sc (key)\n");
-		close(sc);
-	}
-
-	// Leer el atributo 'N'
-	if (read(sc, (char *) &message.N, sizeof(int)) == -1) { 
-		perror("Error al leer el socket sc (N)\n");
-		close(sc);
-	}
-
-	// Leer el atributo 'v2'
-	if (read(sc, (char *) &message.v2, sizeof(double) * message.N) == -1) { 
-		perror("Error al leer el socket sc (v2)\n");
-		close(sc);
-	}
-
-	switch (message.op)
+	switch (op)
 	{
 		case 0:
-			res.error = init();
+			error = init();
 			break;
 		case 1:
-			res.error = set_value(message.key, message.v1, message.N, message.v2);
+
+			recvMessage(sc, (char *) &key, sizeof(int));
+			key = ntohl(key);
+
+			readLine(sc, v1, MAX_VALUE_LENGTH);
+
+			recvMessage(sc, (char *) &N, sizeof(int));
+			N = ntohl(N);
+
+			for (int i = 0; i < N; i++) {
+				char v2_str[20];
+				readLine(sc, v2_str, 20);
+				v2[i] = strtod(v2_str, NULL);
+			}
+
+			error = set_value(key, v1, N, v2);
 			break;
 		case 2:
-			res.error = get_value(message.key, message.v1, &message.N, message.v2);
-			res.key = message.key;
-			res.N = message.N;
-			strcpy(res.v1, message.v1);
-			for (int i = 0; i < res.N; i++)
-    			res.v2[i] = message.v2[i];
+
+			recvMessage(sc, (char *) &key, sizeof(int));
+			key = ntohl(key);
+
+			error = get_value(key, v1, &N, v2);
+
+			sendMessage(sc, v1, strlen(v1) + 1);
+
+			int N_network = htonl(N);
+			sendMessage(sc, (char *)&N_network, sizeof(int));
+
+			for (int i = 0; i < N; i++)
+			{
+				char v2_str[20]; 
+				snprintf(v2_str, sizeof(v2_str), "%lf", v2[i]);
+				sendMessage(sc, v2_str, strlen(v2_str) + 1); // Incluye el carácter nulo en la longitud
+			}
+
+			sendMessage(sc, (char *) &error, sizeof(int));
 			break;
 		case 3:
-			res.error = modify_value(message.key, message.v1, message.N, message.v2);
+
+			recvMessage(sc, (char *) &key, sizeof(int));
+			key = ntohl(key);
+
+			readLine(sc, v1, MAX_VALUE_LENGTH);
+
+			recvMessage(sc, (char *) &N, sizeof(int));
+			N = ntohl(N);
+
+			for (int i = 0; i < N; i++) {
+				char v2_str[20];
+				readLine(sc, v2_str, 20);
+				v2[i] = strtod(v2_str, NULL);
+			}
+
+			error = modify_value(key, v1, N, v2);
 			break;
 		case 4:
-			res.error = delete_key(message.key);
+			recvMessage(sc, (char *) &key, sizeof(int));
+			key = ntohl(key);
+
+			error = delete_key(key);
 			break;
 		case 5:
-			res.error = exist(message.key);
+			recvMessage(sc, (char *) &key, sizeof(int));
+			key = ntohl(key);
+
+			error = exist(key);
 			break;
 	}
-	//Casteos a network falta
-	res.error = htonl(res.error);
 
-	//Puede pasar a otra funcion o algo asi
-	if (write(sc, (char *) &res.op, sizeof(int)) == -1)
-	{ 
-		perror("Error al escribir en el socket sc (op)\n");
-		close (sc);
-	}
+	error = htonl(error);
+	sendMessage(sc, (char *) &error, sizeof(int));
 
-	if (write(sc, res.v1, MAX_VALUE_LENGTH) == -1)
-	{ 
-		perror("Error al escribir en el socket sc (v1)\n");
-		close (sc);
-	}
-
-	if (write(sc, (char *) &res.key, sizeof(int)) == -1)
-	{ 
-		perror("Error al escribir en el socket sc (key)\n");
-		close (sc);
-	}
-
-	if (write(sc, (char *) &res.N, sizeof(int)) == -1)
-	{ 
-		perror("Error al escribir en el socket sc (N)\n");
-		close (sc);
-	}
-
-	if (write(sc, (char *) &res.v2, sizeof(double) * res.N) == -1)
-	{ 
-		perror("Error al escribir en el socket sc (v2)\n");
-		close (sc);
-	}
-
-	if (write(sc, (char *) &res.error, sizeof(int)) == -1)
-	{ 
-		perror("Error al escribir en el socket sc (error)\n");
-		close (sc);
-	}
 	close(sc);
 	pthread_exit(0);
-
 }
-
-/*void print_message(struct request message) {
-    printf("Operation: %d\n", message.op);
-    printf("Node: key=%d, v1=%s, N=%d\n", message.key, message.v1, message.N);
-	printf("Contenido de v2:\n");
-    for (int i = 0; i < message.N; i++) {
-        printf("%f ", message.v2[i]);
-    }
-    printf("\n");
-}*/
 
 int main(int argc, char *argv[])
 	{
-	struct request message;
 	struct sockaddr_in server_addr,  client_addr;
 	socklen_t size;
 	pthread_attr_t t_attr;
@@ -196,7 +174,7 @@ int main(int argc, char *argv[])
 		}
 		printf("conexión aceptada de IP: %s   Puerto: %d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-		if (pthread_create(&thid, &t_attr, (void *)treat_request, (void *)&sc)== 0)
+		if (pthread_create(&thid, &t_attr, (void *)treat_request, (void *)&sd)== 0)
 		{
 			pthread_mutex_lock(&mutex_mensaje);
 			while (not_finished)

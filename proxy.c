@@ -3,11 +3,11 @@
 #include <string.h>
 #include <stdio.h>
 #include <sys/types.h>
-#include <unistd.h>
 #include <stdlib.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include "lines.h"
 int sd;
 
 
@@ -53,13 +53,10 @@ static int init_socket()
 	return (0);
 }
 
-
+/*
 //falta preguntar a david si pasar las variables globales esta hecho a posta para beneficiar la modularidad
 int communication(struct request message, struct response *res)
 {
-	// printf("Tamano de struct: %ld, Tamano de mensaje: %ld\n", sizeof(struct request), sizeof(message));
-	// printf("Tamaño por separado: %ld \n", sizeof(message.key) + sizeof(message.N) + sizeof(message.op) +
-	// sizeof(message.queue) + sizeof(message.v1) + sizeof(message.v2));
 
 	// Escribo los datos a enviar de la estructura en el socket
 	// Escribir el atributo 'op'
@@ -139,7 +136,7 @@ int communication(struct request message, struct response *res)
 
 	return (0);
 }
-
+*/
 //falta comprobar que n_value coincida con v_value
 static int check_value(char *value1, int N_value2, double *V_value2)
 {
@@ -152,21 +149,20 @@ static int check_value(char *value1, int N_value2, double *V_value2)
 
 int init()
 {
-	struct request message;	
-	struct response res;
 	if (init_socket() == -1)
 	{
 		printf("Error initialiting socket\n");
 		return (-1);
 	}
-	//falta casteos a network
-	message.op = htonl(0);
-	if (communication(message, &res) == -1)
-	{
-		printf("Error in coms with server\n");
-		return (-1);
-	}
-	if (res.error != 0)
+
+	char op = 0;
+	sendMessage(sd, (char *) &op, sizeof(char));
+
+	int error;
+	recvMessage(sd, (char *) &error, sizeof(int));
+	error = ntohl(error);
+
+	if (error != 0)
 	{
 		printf("Error in init\n");
 		return (-1);
@@ -180,8 +176,6 @@ int init()
 
 int set_value(int key, char *value1, int N_value2, double *V_value2)
 {
-	struct request message;	
-	struct response res;
 	if (init_socket() == -1)
 	{
 		printf("Error initialiting socket\n");
@@ -192,18 +186,29 @@ int set_value(int key, char *value1, int N_value2, double *V_value2)
 		printf("Not the right values\n");
 		return (-1);
 	}
-	message.op = 1;
-	message.key = key;
-	message.N = N_value2;
-	strcpy(message.v1, value1);
+	char op = 1;
+	sendMessage(sd, (char *) &op, sizeof(char));
+
+	key = htonl(key);
+	sendMessage(sd, (char *) &key, sizeof(int));
+
+	sendMessage(sd, value1, strlen(value1) + 1);
+
+	int N_value2_network = htonl(N_value2);
+	sendMessage(sd, (char *)&N_value2_network, sizeof(int));
+
 	for (int i = 0; i < N_value2; i++)
-    	message.v2[i] = V_value2[i];
-	if (communication(message, &res) == -1)
 	{
-		printf("Error in coms with server\n");
-		return (-1);
+		char V_value2_str[20]; 
+		snprintf(V_value2_str, sizeof(V_value2_str), "%lf", V_value2[i]);
+		sendMessage(sd, V_value2_str, strlen(V_value2_str) + 1); // Incluye el carácter nulo en la longitud
 	}
-	if (res.error != 0)
+
+	int error;
+	recvMessage(sd, (char *) &error, sizeof(int));
+	error = ntohl(error);
+
+	if (error != 0)
 	{
 		printf("Error in set_value\n");
 		return (-1);
@@ -217,38 +222,45 @@ int set_value(int key, char *value1, int N_value2, double *V_value2)
 
 int get_value(int key, char *value1, int *N_value2, double *V_value2)
 {
-	struct request message;	
-	struct response res;
+
 	if (init_socket() == -1)
 	{
 		printf("Error initialiting socket\n");
 		return (-1);
 	}
-	message.op = 2;
-	message.key = key;
-	message.N = *N_value2;
-	strcpy(message.v1, value1);
-	memcpy(message.v2, V_value2, *N_value2 * sizeof(double));
-	if (communication(message, &res) == -1)
-	{
-		printf("Error in coms with server\n");
-		return (-1);
-	}
-	if (res.error != 0)
+	char op = 2;
+	sendMessage(sd, (char *) &op, sizeof(char));
+
+	key = htonl(key);
+	sendMessage(sd, (char *) &key, sizeof(int));
+
+	readLine(sd, value1, 256);
+
+	int N_network;
+	recvMessage(sd, (char *)&N_network, sizeof(int));
+	*N_value2 = ntohl(N_network);
+
+    for (int i = 0; i < *N_value2; i++) {
+        char v2_str[20];
+        readLine(sd, v2_str, sizeof(v2_str));
+        V_value2[i] = strtod(v2_str, NULL);
+    }
+
+	int error;
+	recvMessage(sd, (char *) &error, sizeof(int));
+	error = ntohl(error);
+	if (error != 0)
 	{
 		printf("Error in get_value\n");
 		return (-1);
 	}
 	else
 	{
-		printf("Your values: v1: %s, N2: %d\n", res.v1, res.N);
-		strcpy(value1, res.v1);
-		*N_value2 = res.N;
+		printf("Your values: v1: %s, N2: %d\n", value1, *N_value2);
 		printf("Contenido de v2:\n");
-    	for(int i = 0; i < res.N; i++)
+    	for(int i = 0; i < *N_value2; i++)
 		{
-        	printf("%f ", res.v2[i]);
-			V_value2[i] = res.v2[i];
+        	printf("%f ", V_value2[i]);
 		}
 		printf("\n");
 		return (0);
@@ -257,8 +269,6 @@ int get_value(int key, char *value1, int *N_value2, double *V_value2)
 
 int modify_value(int key, char *value1, int N_value2, double *V_value2)
 {
-	struct request message;	
-	struct response res;
 	if (init_socket() == -1)
 	{
 		printf("Error initialiting socket\n");
@@ -269,17 +279,30 @@ int modify_value(int key, char *value1, int N_value2, double *V_value2)
 		printf("Not the right values\n");
 		return (-1);
 	}
-	message.op = 3;
-	message.key = key;
-	message.N = N_value2;
-	strcpy(message.v1, value1);
-	memcpy(message.v2, V_value2, N_value2 * sizeof(double));
-	if (communication(message, &res) == -1)
+	
+	char op = 3;
+	sendMessage(sd, (char *) &op, sizeof(char));
+
+	key = htonl(key);
+	sendMessage(sd, (char *) &key, sizeof(int));
+
+	sendMessage(sd, value1, strlen(value1) + 1);
+
+	int N_value2_network = htonl(N_value2);
+	sendMessage(sd, (char *)&N_value2_network, sizeof(int));
+
+	for (int i = 0; i < N_value2; i++)
 	{
-		printf("Error in coms with server\n");
-		return (-1);
+		char V_value2_str[20]; 
+		snprintf(V_value2_str, sizeof(V_value2_str), "%lf", V_value2[i]);
+		sendMessage(sd, V_value2_str, strlen(V_value2_str) + 1); // Incluye el carácter nulo en la longitud
 	}
-	if (res.error != 0)
+
+	int error;
+	recvMessage(sd, (char *) &error, sizeof(int));
+	error = ntohl(error);
+
+	if (error != 0)
 	{
 		printf("Error in modify_value\n");
 		return (-1);
@@ -293,21 +316,22 @@ int modify_value(int key, char *value1, int N_value2, double *V_value2)
 
 int delete_key(int key)
 {
-	struct request message;	
-	struct response res;
 	if (init_socket() == -1)
 	{
 		printf("Error initialiting socket\n");
 		return (-1);
 	}
-	message.op = 4;
-	message.key = key;
-	if (communication(message, &res) == -1)
-	{
-		printf("Error in coms with server\n");
-		return (-1);
-	}
-	if (res.error != 0)
+	char op = 4;
+	sendMessage(sd, (char *) &op, sizeof(char));
+
+	key = htonl(key);
+	sendMessage(sd, (char *) &key, sizeof(int));
+
+	int error;
+	recvMessage(sd, (char *) &error, sizeof(int));
+	error = ntohl(error);
+
+	if (error != 0)
 	{
 		printf("Error in delete\n");
 		return (-1);
@@ -321,26 +345,27 @@ int delete_key(int key)
 
 int exist(int key)
 {
-	struct request message;	
-	struct response res;
 	if (init_socket() == -1)
 	{
 		printf("Error initialiting socket\n");
 		return (-1);
 	}
-	message.op = 5;
-	message.key = key;
-	if (communication(message, &res) == -1)
-	{
-		printf("Error in coms with server\n");
-		return (-1);
-	}
-	if (res.error == 0)
+	char op = 5;
+	sendMessage(sd, (char *) &op, sizeof(char));
+
+	key = htonl(key);
+	sendMessage(sd, (char *) &key, sizeof(int));
+
+	int error;
+	recvMessage(sd, (char *) &error, sizeof(int));
+	error = ntohl(error);
+
+	if (error == 0)
 	{
 		printf("Does not exist\n");
 		return (0);
 	}
-	else if (res.error == 1)
+	else if (error == 1)
 	{
 		printf("Exists\n");
 		return (1);
