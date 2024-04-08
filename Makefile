@@ -8,7 +8,7 @@ PROXY_OBJECTS = $(PROXY_SOURCES:.c=.o)
 PROXY = libclaves.so
 
 #SERVIDOR 
-SERVER_SOURCES = servidor.c claves.c list.c
+SERVER_SOURCES = servidor.c claves.c list.c lines.c
 SERVER_OBJECTS = $(SERVER_SOURCES:.c=.o)
 SERVER = servidor
 

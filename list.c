@@ -3,8 +3,6 @@
 #include <string.h>
 #include "list.h"
 
-
-
 int init_list(List *l)
 {
 	*l = NULL;

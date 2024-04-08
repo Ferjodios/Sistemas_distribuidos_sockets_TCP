@@ -1,5 +1,4 @@
-
-#include "claves.h"
+#include "proxy.h"
 #include <string.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -7,15 +6,96 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include "lines.h"
-int sd;
+#include <unistd.h>
+#include <errno.h>
+
+//Métodos proporcionados por los profesores
+static int sendMessage(int socket, char * buffer, int len)
+{
+	int r;
+	int l = len;
+
+	do {	
+		r = write(socket, buffer, l);
+		l = l -r;
+		buffer = buffer + r;
+	} while ((l>0) && (r>=0));
+	
+	if (r < 0)
+		return (-1);
+	else
+		return(0);
+}
+
+static int recvMessage(int socket, char *buffer, int len)
+{
+	int r;
+	int l = len;
+		
+
+	do {	
+		r = read(socket, buffer, l);
+		l = l -r ;
+		buffer = buffer + r;
+	} while ((l>0) && (r>=0));
+	
+	if (r < 0)
+		return (-1);
+	else
+		return(0);
+}
+
+static ssize_t readLine(int fd, void *buffer, size_t n)
+{
+	ssize_t numRead;
+	size_t totRead;
+	char *buf;
+	char ch;
+
+
+	if (n <= 0 || buffer == NULL) { 
+		errno = EINVAL;
+		return -1; 
+	}
+
+	buf = buffer;
+	totRead = 0;
+	
+	for (;;) {
+			numRead = read(fd, &ch, 1);
+
+			if (numRead == -1) {	
+					if (errno == EINTR)
+						continue;
+				else
+			return -1;
+			} else if (numRead == 0) {
+					if (totRead == 0)
+						return 0;
+			else
+						break;
+			} else {
+					if (ch == '\n')
+						break;
+					if (ch == '\0')
+						break;
+					if (totRead < n - 1) {
+				totRead++;
+				*buf++ = ch; 
+			}
+		} 
+	}
+	
+	*buf = '\0';
+		return totRead;
+}
 
 
 static int init_socket()
 {
 	struct sockaddr_in server_addr;
 	struct hostent *hp;
-
+	int sd;
 	// Accedemos a las variables de entorno que deben ser definidas antes
 	char* port = getenv("PORT_TUPLAS");
 	if (port == NULL){//Si no existe salta error
@@ -47,97 +127,13 @@ static int init_socket()
 	
 	if (connect(sd, (struct sockaddr *) &server_addr,  sizeof(server_addr)) < 0) {
 		printf("Error en connect\n");
-		//close(sd);
 		return (-1);
 	}
-	return (0);
+	//Devuelve el valor del servidor si no ha habido ningun problema
+	return (sd);
 }
 
-/*
-//falta preguntar a david si pasar las variables globales esta hecho a posta para beneficiar la modularidad
-int communication(struct request message, struct response *res)
-{
-
-	// Escribo los datos a enviar de la estructura en el socket
-	// Escribir el atributo 'op'
-	if (write(sd, (char *) &message.op, sizeof(int)) == -1)
-	{
-		perror("Error al escribir en el socket sd (op)\n");
-		close (sd);
-		return (-1);
-	}
-
-	// Escribir el atributo 'v1'
-	if (write(sd, message.v1, MAX_VALUE_LENGTH) ==-1){ 
-		perror("Error al escribir en el socket sd (v1)\n");
-		close (sd);
-		return (-1);
-	}
-
-	// Escribir el atributo 'key'
-	if (write(sd, (char *) &message.key, sizeof(int)) == -1) { 
-		perror("Error al escribir en el socket sd (key)\n");
-		close(sd);
-		return (-1);
-	}
-
-	// Escribir el atributo 'N'
-	if (write(sd, (char *) &message.N, sizeof(int)) == -1) { 
-		perror("Error al escribir en el socket sd (N)\n");
-		close(sd);
-		return (-1);
-	}
-
-	// Escribir el atributo 'v2'
-	if (write(sd, (char *) &message.v2, sizeof(double) * message.N) == -1) { 
-		perror("Error al escribir en el socket sd (v2)\n");
-		close(sd);
-		return (-1);
-	}
-
-	// Leo la respuesta del socket
-
-	if (read(sd, (char *) &res->op, sizeof(int)) == -1)
-	{ 
-		perror("Error al leer del socket sd (op)\n");
-		close (sd);
-	}
-
-	if (read(sd, res->v1, MAX_VALUE_LENGTH) == -1)
-	{ 
-		perror("Error al leer del socket sd (v1)\n");
-		close (sd);
-	}
-
-	if (read(sd, (char *) &res->key, sizeof(int)) == -1)
-	{ 
-		perror("Error al leer del socket sd (key)\n");
-		close (sd);
-	}
-
-	if (read(sd, (char *) &res->N, sizeof(int)) == -1)
-	{ 
-		perror("Error al leer del socket sd (N)\n");
-		close (sd);
-	}
-
-	if (read(sd, (char *) &res->v2, sizeof(double) * res->N) == -1)
-	{ 
-		perror("Error al leer del socket sd (v2)\n");
-		close (sd);
-	}
-
-	if (read(sd, (char *) &res->error, sizeof(int)) == -1)
-	{ 
-		perror("Error al leer del socket sd (error)\n");
-		close (sd);
-	}
-	close(sd);
-
-	return (0);
-}
-*/
-//falta comprobar que n_value coincida con v_value
+//Comprueba que los valores sean los correctos
 static int check_value(char *value1, int N_value2, double *V_value2)
 {
 	if (strlen(value1) >= 256)
@@ -149,45 +145,63 @@ static int check_value(char *value1, int N_value2, double *V_value2)
 
 int init()
 {
-	if (init_socket() == -1)
+	//Inicializa el socket
+	int sd = init_socket();
+	if (sd == -1)
 	{
-		printf("Error initialiting socket\n");
+		printf("Error inicializando el socket\n");
 		return (-1);
 	}
 
-	char op = 0;
-	sendMessage(sd, (char *) &op, sizeof(char));
+	//Envía el mensaje por el socket
+	int op = 0;
+	op = htonl(op);
+	if (sendMessage(sd, (char *) &op, sizeof(int32_t)) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 
+	//Recibe la respuesta del servidor
 	int error;
-	recvMessage(sd, (char *) &error, sizeof(int));
+	if (recvMessage(sd, (char *) &error, sizeof(int)) < 0) {
+		printf("Error recibiendo\n");
+		return (-1);
+	}
 	error = ntohl(error);
-
+	// Gestión del resultado
 	if (error != 0)
 	{
-		printf("Error in init\n");
+		printf("Error en init\n");
 		return (-1);
 	}		
 	else
 	{
-		printf("Linked list emptied\n");
+		printf("Lista enlazada vaciada\n");
 		return (0);
 	}
 }
 
 int set_value(int key, char *value1, int N_value2, double *V_value2)
 {
-	if (init_socket() == -1)
+	//Inicializa el socket
+	int sd = init_socket();
+	if (sd == -1)
 	{
-		printf("Error initialiting socket\n");
+		printf("Error inicializando el socket\n");
 		return (-1);
 	}
 	if (check_value(value1, N_value2, V_value2) == -1)
 	{
-		printf("Not the right values\n");
+		printf("No son los valores correctos\n");
 		return (-1);
 	}
-	char op = 1;
-	sendMessage(sd, (char *) &op, sizeof(char));
+	//Envía el mensaje por el socket
+	int op = 1;
+	op = htonl(op);
+	if (sendMessage(sd, (char *) &op, sizeof(int32_t)) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 
 	key = htonl(key);
 	sendMessage(sd, (char *) &key, sizeof(int));
@@ -201,66 +215,89 @@ int set_value(int key, char *value1, int N_value2, double *V_value2)
 	{
 		char V_value2_str[20]; 
 		snprintf(V_value2_str, sizeof(V_value2_str), "%lf", V_value2[i]);
-		sendMessage(sd, V_value2_str, strlen(V_value2_str) + 1); // Incluye el carácter nulo en la longitud
+		if (sendMessage(sd, V_value2_str, strlen(V_value2_str) + 1) < 0)
+		{
+			printf("Error enviando\n");
+			return (-1);
+		}
 	}
 
+	//Recibe la respuesta del servidor
 	int error;
-	recvMessage(sd, (char *) &error, sizeof(int));
+	if (recvMessage(sd, (char *) &error, sizeof(int)) < 0) {
+		printf("Error recibiendo\n");
+		return (-1);
+	}
 	error = ntohl(error);
-
+	// Gestión del resultado
 	if (error != 0)
 	{
-		printf("Error in set_value\n");
+		printf("Error en set_value\n");
 		return (-1);
 	}
 	else
 	{
-		printf("Value set\n");
+		printf("Valor establecido\n");
 		return (0);
 	}
 }
 
+
 int get_value(int key, char *value1, int *N_value2, double *V_value2)
 {
-
-	if (init_socket() == -1)
+	//Inicializa el socket
+	int sd = init_socket();
+	if (sd == -1)
 	{
-		printf("Error initialiting socket\n");
+		printf("Error inicializando el socket\n");
 		return (-1);
 	}
-	char op = 2;
-	sendMessage(sd, (char *) &op, sizeof(char));
+	//Envía el mensaje por el socket
+	int op = 2;
+	op = htonl(op);
+	if (sendMessage(sd, (char *) &op, sizeof(int32_t)) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 
 	key = htonl(key);
 	sendMessage(sd, (char *) &key, sizeof(int));
 
+	//Recibe la respuesta del servidor
 	readLine(sd, value1, 256);
 
 	int N_network;
-	recvMessage(sd, (char *)&N_network, sizeof(int));
+	if (recvMessage(sd, (char *)&N_network, sizeof(int)) < 0) {
+		printf("Error recibiendo\n");
+		return (-1);
+	}
 	*N_value2 = ntohl(N_network);
 
-    for (int i = 0; i < *N_value2; i++) {
-        char v2_str[20];
-        readLine(sd, v2_str, sizeof(v2_str));
-        V_value2[i] = strtod(v2_str, NULL);
-    }
+	for (int i = 0; i < *N_value2; i++) {
+		char v2_str[20];
+		readLine(sd, v2_str, sizeof(v2_str));
+		V_value2[i] = strtod(v2_str, NULL);
+	}
 
 	int error;
-	recvMessage(sd, (char *) &error, sizeof(int));
+	if (recvMessage(sd, (char *) &error, sizeof(int)) < 0) {
+		printf("Error recibiendo\n");
+		return (-1);
+	}
 	error = ntohl(error);
+	// Gestión del resultado
 	if (error != 0)
 	{
-		printf("Error in get_value\n");
+		printf("Error en get_value\n");
 		return (-1);
 	}
 	else
 	{
-		printf("Your values: v1: %s, N2: %d\n", value1, *N_value2);
+		printf("Tus valores: v1: %s, N2: %d\n", value1, *N_value2);
 		printf("Contenido de v2:\n");
-    	for(int i = 0; i < *N_value2; i++)
+		for(int i = 0; i < *N_value2; i++)
 		{
-        	printf("%f ", V_value2[i]);
+			printf("%f ", V_value2[i]);
 		}
 		printf("\n");
 		return (0);
@@ -269,110 +306,163 @@ int get_value(int key, char *value1, int *N_value2, double *V_value2)
 
 int modify_value(int key, char *value1, int N_value2, double *V_value2)
 {
-	if (init_socket() == -1)
+	//Inicializa el socket
+	int sd = init_socket();
+	if (sd == -1)
 	{
-		printf("Error initialiting socket\n");
+		printf("Error inicializando el socket\n");
 		return (-1);
 	}
 	if (check_value(value1, N_value2, V_value2) == -1)
 	{
-		printf("Not the right values\n");
+		printf("No son los valores correctos\n");
 		return (-1);
 	}
 	
-	char op = 3;
-	sendMessage(sd, (char *) &op, sizeof(char));
+	//Envía el mensaje por el socket
+	int op = 3;
+	op = htonl(op);
+	if (sendMessage(sd, (char *) &op, sizeof(int32_t)) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 
 	key = htonl(key);
-	sendMessage(sd, (char *) &key, sizeof(int));
+	if (sendMessage(sd, (char *) &key, sizeof(int)) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 
-	sendMessage(sd, value1, strlen(value1) + 1);
+	if (sendMessage(sd, value1, strlen(value1) + 1) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 
 	int N_value2_network = htonl(N_value2);
-	sendMessage(sd, (char *)&N_value2_network, sizeof(int));
+	if (sendMessage(sd, (char *)&N_value2_network, sizeof(int)) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 
 	for (int i = 0; i < N_value2; i++)
 	{
 		char V_value2_str[20]; 
 		snprintf(V_value2_str, sizeof(V_value2_str), "%lf", V_value2[i]);
-		sendMessage(sd, V_value2_str, strlen(V_value2_str) + 1); // Incluye el carácter nulo en la longitud
+		if (sendMessage(sd, V_value2_str, strlen(V_value2_str) + 1) < 0)
+		{
+			printf("Error enviando\n");
+			return (-1);
+		}
 	}
 
+	//Recibe la respuesta del servidor
 	int error;
-	recvMessage(sd, (char *) &error, sizeof(int));
+	if (recvMessage(sd, (char *) &error, sizeof(int)) < 0) {
+		printf("Error recibiendo\n");
+		return (-1);
+	}
 	error = ntohl(error);
-
+	// Gestión del resultado
 	if (error != 0)
 	{
-		printf("Error in modify_value\n");
+		printf("Error en modify_value\n");
 		return (-1);
 	}
 	else
 	{
-		printf("Modify succesful\n");
+		printf("Modificación exitosa\n");
 		return (0);
 	}
 }
 
 int delete_key(int key)
 {
-	if (init_socket() == -1)
+	//Inicializa el socket
+	int sd = init_socket();
+	if (sd == -1)
 	{
-		printf("Error initialiting socket\n");
+		printf("Error inicializando el socket\n");
 		return (-1);
 	}
-	char op = 4;
-	sendMessage(sd, (char *) &op, sizeof(char));
+	//Envía el mensaje por el socket
+	int op = 4;
+	op = htonl(op);
+	if (sendMessage(sd, (char *) &op, sizeof(int32_t)) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 
 	key = htonl(key);
-	sendMessage(sd, (char *) &key, sizeof(int));
+	if (sendMessage(sd, (char *) &key, sizeof(int)) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 
+	//Recibe la respuesta del servidor
 	int error;
-	recvMessage(sd, (char *) &error, sizeof(int));
+	if (recvMessage(sd, (char *) &error, sizeof(int)) < 0) {
+		printf("Error recibiendo\n");
+		return (-1);
+	}
 	error = ntohl(error);
-
+	// Gestión del resultado
 	if (error != 0)
 	{
-		printf("Error in delete\n");
+		printf("Error en delete\n");
 		return (-1);
 	}
 	else
 	{
-		printf("deleted sucessful\n");
+		printf("Eliminado con éxito\n");
 		return (0);
 	}
 }
 
+
 int exist(int key)
 {
-	if (init_socket() == -1)
+	//Inicializa el socket
+	int sd = init_socket();
+	if (sd == -1)
 	{
-		printf("Error initialiting socket\n");
+		printf("Error inicializando el socket\n");
 		return (-1);
 	}
-	char op = 5;
-	sendMessage(sd, (char *) &op, sizeof(char));
-
+	//Envía el mensaje por el socket
+	int op = 5;
+	op = htonl(op);
+	if (sendMessage(sd, (char *) &op, sizeof(int32_t)) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 	key = htonl(key);
-	sendMessage(sd, (char *) &key, sizeof(int));
+	if (sendMessage(sd, (char *) &key, sizeof(int)) < 0) {
+		printf("Error enviando\n");
+		return (-1);
+	}
 
+	//Recibe la respuesta del servidor
 	int error;
-	recvMessage(sd, (char *) &error, sizeof(int));
+	if (recvMessage(sd, (char *) &error, sizeof(int)) < 0) {
+		printf("Error recibiendo\n");
+		return (-1);
+	}
 	error = ntohl(error);
 
+	// Gestión del resultado
 	if (error == 0)
 	{
-		printf("Does not exist\n");
+		printf("No existe\n");
 		return (0);
 	}
 	else if (error == 1)
 	{
-		printf("Exists\n");
+		printf("Existe\n");
 		return (1);
 	}	
 	else 
 	{
-		printf("Error in function\n");
+		printf("Error en la función\n");
 		return (-1);
 	}
 }
